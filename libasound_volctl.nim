@@ -68,6 +68,12 @@ proc snd_mixer_selem_set_playback_dB(elem: snd_mixer_elem_t, channel: SND_MIXER_
 proc snd_mixer_selem_set_capture_dB(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: clong, dir: int): cint
 proc snd_mixer_selem_set_playback_dB_all(elem: snd_mixer_elem_t, value: clong, dir: int): cint
 proc snd_mixer_selem_set_capture_dB_all(elem: snd_mixer_elem_t, value: clong, dir: int): cint
+proc snd_mixer_selem_get_playback_switch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: var cint): cint
+proc snd_mixer_selem_set_playback_switch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: cint): cint
+proc snd_mixer_selem_set_playback_switch_all(elem: snd_mixer_elem_t, value: cint): cint
+proc snd_mixer_selem_get_capture_switch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: var cint): cint
+proc snd_mixer_selem_set_capture_switch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: cint): cint
+proc snd_mixer_selem_set_capture_switch_all(elem: snd_mixer_elem_t, value: cint): cint
 proc snd_mixer_close(mixer: snd_mixer_t): cint
 proc snd_strerror(errnum: cint): cstring
 {.pop.}
@@ -183,6 +189,7 @@ proc setDBVolume*(elem: snd_mixer_elem_t, channels: seq[SND_MIXER_CHANNEL], volu
   elif snd_mixer_selem_has_capture_volume(elem) != 0:
     playbackDevice = false
   else:
+    echo "Could not set volume: not a playback or capture device???"
     return  # not a capture device either. abort, abort, abort
 
   if pointer(elem) == nil:
@@ -199,21 +206,55 @@ proc setDBVolume*(elem: snd_mixer_elem_t, channels: seq[SND_MIXER_CHANNEL], volu
 proc setDBVolume(elem: snd_mixer_elem_t, volume: clong, dir: cint = 0) =
   if pointer(elem) == nil:
     return
-  var playbackDevice: bool
+  var err: cint
   if snd_mixer_selem_has_playback_volume(elem) != 0:
-    playbackDevice = true
+    err = snd_mixer_selem_set_playback_dB_all(elem, volume, dir)
   elif snd_mixer_selem_has_capture_volume(elem) != 0:
-    playbackDevice = false
+    err = snd_mixer_selem_set_capture_dB_all(elem, volume, dir)
   else:
+    echo "Could not set volume: not a playback or capture device???"
     return  # not a capture device either. abort, abort, abort
-  let err = snd_mixer_selem_set_playback_dB_all(elem, volume, dir)
   if err < 0:
     echo "Could not set volume: ", snd_strerror(err)
 
+proc setSwitch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL, value: int) =
+  if pointer(elem) == nil:
+    return
+  var err: cint
+  if snd_mixer_selem_has_playback_volume(elem) != 0:
+    err = snd_mixer_selem_set_playback_switch(elem, channel, cint(value))
+  elif snd_mixer_selem_has_capture_volume(elem) != 0:
+    err = snd_mixer_selem_set_capture_switch(elem, channel, cint(value))
+  if err < 0:
+    echo "Could not mute: ", snd_strerror(err)
+
+proc setSwitch(elem: snd_mixer_elem_t, value: int) =
+  if pointer(elem) == nil:
+    return
+  var err: cint
+  if snd_mixer_selem_has_playback_volume(elem) != 0:
+    err = snd_mixer_selem_set_playback_switch_all(elem, cint(value))
+  else:
+    err = snd_mixer_selem_set_capture_switch_all(elem, cint(value))
+  if err < 0:
+    echo "Could not set switch: ", snd_strerror(err)
+
+proc getSwitch(elem: snd_mixer_elem_t, channel: SND_MIXER_CHANNEL): int =
+  if pointer(elem) == nil:
+    return
+  var err, value: cint
+  if snd_mixer_selem_has_playback_volume(elem) != 0:
+    err = snd_mixer_selem_get_playback_switch(elem, channel, value)
+  else:
+    err = snd_mixer_selem_get_capture_switch(elem, channel, value)
+  if err < 0:
+    echo "Could not get switch: ", snd_strerror(err)
+  return int(value)
+
 when isMainModule:
   let params = commandLineParams()
-  if len(params) == 0 or params[0] notin @["up", "down", "toggle"]:
-    quit("Syntax: " & getAppFilename() & " up|down|toggle")
+  if len(params) == 0 or params[0] notin @["up", "down", "toggle", "mute", "unmute"]:
+    quit("Syntax: " & getAppFilename() & " up|down|toggle|mute|unmute")
   let cmd = params[0]
   # find the card we want
   var cardname: string  # eg. hw:0
@@ -244,7 +285,14 @@ when isMainModule:
         if dbvolume > dbmax:
           dbvolume = dbmax
         setDBVolume(elem, dbvolume)
+      elif cmd == "mute":
+        setSwitch(elem, 0)
+      elif cmd == "unmute":
+        setSwitch(elem, 1)
       else:
-        echo "TODO: implement toggle"
+        if getSwitch(elem, SND_MIXER_SCHN_FRONT_LEFT) == 0:
+          setSwitch(elem, 1)
+        else:
+          setSwitch(elem, 0)
       break  # found matching mixer element, stop
   closeMixer(mixer)
